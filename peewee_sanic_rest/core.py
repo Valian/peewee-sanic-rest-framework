@@ -28,11 +28,12 @@ class ListModelMixin(object):
     PAGE_ITEMS_LIMIT_DEFAULT = 20
     PAGE_ITEMS_LIMIT_MAX = 100
 
-    def get_page_and_limit(self, request):
+    def get_page_limit_count(self, request):
         try:
             page = int(request.args.get('page', 1))
             limit = min(int(request.args.get('limit', self.PAGE_ITEMS_LIMIT_DEFAULT)), self.PAGE_ITEMS_LIMIT_MAX)
-            return page, limit
+            count = int(request.args.get('count', 0))
+            return page, limit, count
         except (KeyError, TypeError, ValueError):
             raise InvalidUsage("Page and limit parameters should be a number.")
 
@@ -41,7 +42,13 @@ class ListModelMixin(object):
 
     async def list(self, request):
         queryset = self.get_queryset(request)
-        page, limit = self.get_page_and_limit(request)
+        page, limit, count = self.get_page_limit_count(request)
+
+        if count:
+            return json({
+                'total': await self.get_total(request, queryset)
+            })
+
         paginated_queryset = queryset.paginate(page, limit)
         objects = await self.manager.execute(paginated_queryset)
         results = []
