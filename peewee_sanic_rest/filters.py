@@ -104,7 +104,6 @@ class RegexFilter(MethodFilter):
 
 
 class TypeFilter(MethodFilter):
-
     type = None
 
     def prepare_value(self, value):
@@ -126,9 +125,39 @@ class StringFilter(TypeFilter):
     type = str
 
 
+class BooleanFilter(TypeFilter):
+    _true_values = {
+        'Y',
+        'YES',
+        'TRUE',
+        'T',
+    }
+    _false_values = {
+        'N',
+        'NO',
+        'FALSE',
+        'F',
+    }
+
+    def type(self, value):
+        if isinstance(value, str):
+            if value.isnumeric():
+                return bool(float(value))
+            else:
+                if value.upper() in self._false_values:
+                    return False
+                elif value.upper() in self._true_values:
+                    return True
+        elif isinstance(value, int) or isinstance(value, float):
+            return bool(value)
+        elif isinstance(value, bool):
+            return value
+        raise ValueError("Cannot map value to boolean!")
+
+
 class CSVFilter(MethodFilter):
 
-    def __init__(self, inner_filter: Filter=None, **kwargs):
+    def __init__(self, inner_filter: Filter = None, **kwargs):
         super().__init__(**kwargs)
         self.inner_filter = inner_filter or StringFilter()
 
