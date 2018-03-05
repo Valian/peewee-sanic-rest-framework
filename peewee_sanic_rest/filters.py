@@ -126,6 +126,10 @@ class StringFilter(TypeFilter):
     type = str
 
 
+class BooleanFilter(TypeFilter):
+    type = bool
+
+
 class CSVFilter(MethodFilter):
 
     def __init__(self, inner_filter: Filter=None, **kwargs):
