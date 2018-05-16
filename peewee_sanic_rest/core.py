@@ -109,11 +109,7 @@ class UpdateModelMixin(object):
             return json(errors, status=400)
 
 
-class ModelResource(object):
-
-    schema_model = None
-    model = None
-    queryset = None
+class Resource(object):
 
     action_to_handler = {
         'list_get': 'list',
@@ -123,31 +119,19 @@ class ModelResource(object):
         'detail_patch': 'update'
     }
 
-    def get_queryset(self, request):
-        return self.queryset if self.queryset is not None else self.model.select()
+    def __init__(self, request, **kwargs):
+        super(Resource, self).__init__(**kwargs)
+        self.request = request
 
-    def get_schema_model(self, request):
-        return self.schema_model()
-
-    async def serialize(self, o):
-        return self.schema.dump(o).data
-
-    async def dispatch(self, request, id=None):
+    async def dispatch(self, request, **kwargs):
         try:
-            return await self._call_action(request, id)
-        except self.model.DoesNotExist:
-            return json({'error': 'Not Found'}, status=404)
+            resource_id = kwargs.get('id')
+            is_detail_view = bool(resource_id)
+            handler = self._get_handler(request.method, is_detail_view)
+            return await handler(request, **kwargs)
         except FilterInvalidArgumentException as e:
             logger.exception(e)
             return json({'error': str(e)}, status=400)
-
-    async def _call_action(self, request, id):
-        is_detail_view = bool(id)
-        handler = self._get_handler(request.method, is_detail_view)
-        if is_detail_view:
-            return await handler(request, id)
-        else:
-            return await handler(request)
 
     def _get_handler(self, method, is_detail_view):
         try:
@@ -158,43 +142,75 @@ class ModelResource(object):
             abort(405)
 
     @classmethod
-    def as_view(cls, manager, method='dispatch'):
+    def as_view(cls, method='dispatch', **view_kwargs):
         def view(request, *args, **kwargs):
-            self = cls()
-            self.schema = self.get_schema_model(request)
-            self.request = request
-            self.manager = manager
-            self.args = args
-            self.kwargs = kwargs
+            self = cls(request, **view_kwargs)
             handler = getattr(self, method)
             return handler(request, *args, **kwargs)
         return view
 
     @classmethod
-    def register(cls, app, manager, **kwargs):
-        app.add_route(cls.as_view(manager), '/', methods=['GET', 'POST'])
-        app.add_route(cls.as_view(manager), '/<id:number>', methods=['GET', 'PATCH', 'DELETE'])
+    def register(cls, app, view_kwargs=None, prefix='', **kwargs):
+        view_kwargs = view_kwargs or {}
+        view_func = cls.as_view(**view_kwargs)
+        app.add_route(
+            view_func, prefix + '/',
+            methods=['GET', 'POST'], **kwargs)
+        app.add_route(
+            view_func, prefix + '/<id>',
+            methods=['GET', 'PATCH', 'DELETE'], **kwargs)
         for name in dir(cls):
             elem = getattr(cls, name)
             route = getattr(elem, '_route', None)
             if route:
-                cls.add_custom_route(app, manager, name, route)
+                route['kwargs'].update(kwargs)
+                cls.add_custom_route(app, name, route, prefix, **view_kwargs)
 
     @classmethod
-    def add_custom_route(cls, app, manager, name, route):
+    def add_custom_route(cls, app, name, route, prefix='', **view_kwargs):
+        view_kwargs = view_kwargs or {}
         endpoint = name.replace('_', '-')
-        handler = cls.as_view(method=name, manager=manager)
+        handler = cls.as_view(method=name, **view_kwargs)
         if route['type'] == 'detail':
-            path = '/<id:number>/{}'.format(endpoint)
+            path = prefix + '/<id>/{}'.format(endpoint)
             app.add_route(handler, path, **route['kwargs'])
         elif route['type'] == 'index':
-            path = '/{}'.format(endpoint)
+            path = prefix + '/{}'.format(endpoint)
             app.add_route(handler, path, **route['kwargs'])
         else:
             raise ConfigurationException('Unknown route type {}'.format(route['type']))
 
 
-class ReadOnlyModelResource(RetrieveModelMixin, FilteredResourceMixin, ListModelMixin, ModelResource):
+class ModelResource(Resource):
+
+    schema_model = None
+    model = None
+    queryset = None
+
+    def __init__(self, request, **kwargs):
+        assert 'manager' in kwargs, "You must pass manager in 'as_view' method"
+        manager = kwargs.pop('manager')
+        super(ModelResource, self).__init__(request, **kwargs)
+        self.manager = manager
+        self.schema = self.get_schema_model(request)
+
+    def get_queryset(self, request):
+        return self.queryset if self.queryset is not None else self.model.select()
+
+    def get_schema_model(self, request):
+        return self.schema_model()
+
+    async def serialize(self, o):
+        return self.schema.dump(o).data
+
+    async def dispatch(self, request, **kwargs):
+        try:
+            return await super(ModelResource, self).dispatch(request, **kwargs)
+        except self.model.DoesNotExist:
+            return json({'error': 'Not Found'}, status=404)
+
+
+class ReadOnlyModelResource(RetrieveModelMixin, ListModelMixin, ModelResource, FilteredResourceMixin):
     pass
 
 

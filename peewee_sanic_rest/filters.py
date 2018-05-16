@@ -3,6 +3,7 @@ import re
 from typing import List
 
 import peewee
+from sanic.response import json
 
 from peewee_sanic_rest.exceptions import FilterConfigurationException, FilterInvalidArgumentException
 
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 class Filter(object):
 
     def __init__(self, *, ignore_failure=False):
+        super(Filter, self).__init__()
         self.ignore_failure = ignore_failure
 
     def prepare_value(self, value):
@@ -180,3 +182,10 @@ class FilteredResourceMixin(FilterSet):
         qs = super().get_queryset(request)
         qs = self.filter(qs, request.args)
         return qs
+
+    async def dispatch(self, request, id=None):
+        try:
+            await super(FilteredResourceMixin, self).dispatch(request, id)
+        except FilterInvalidArgumentException as e:
+            logger.exception(e)
+            return json({'error': str(e)}, status=400)
